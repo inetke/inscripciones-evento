@@ -3,8 +3,8 @@ import re
 import io
 import pandas as pd
 import streamlit as st
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import psycopg
+from psycopg.rows import dict_row
 
 st.set_page_config(page_title="Inscripciones Evento", page_icon="✅", layout="centered")
 
@@ -32,11 +32,12 @@ def connect():
     if not db_url:
         st.error("Falta configurar la conexión a la base de datos (DATABASE_URL / secrets).")
         st.stop()
-    return psycopg2.connect(db_url)
+    return psycopg.connect(db_url, row_factory=dict_row)
 
 # ---------- DB ops ----------
 def fetch_event_dates():
-    with connect() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+    with connect() as conn:
+    with conn.cursor() as cur:
         cur.execute("select distinct event_date from public.sessions order by event_date;")
         rows = cur.fetchall()
     return [r["event_date"] for r in rows]
@@ -56,7 +57,8 @@ def fetch_sessions(event_date):
     group by s.id
     order by s.activity, s.start_time;
     """
-    with connect() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+    with connect() as conn:
+    with conn.cursor() as cur:
         cur.execute(sql, (event_date,))
         rows = cur.fetchall()
     for r in rows:
@@ -71,7 +73,7 @@ def create_booking_atomic(session_id, full_name, phone, email):
     - insert booking if remaining > 0
     """
     with connect() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+    with conn.cursor() as cur:
             # Lock session row to avoid race conditions
             cur.execute("select id, capacity from public.sessions where id=%s for update;", (session_id,))
             srow = cur.fetchone()
@@ -115,7 +117,8 @@ def fetch_bookings(event_date):
     where s.event_date = %s
     order by s.activity, s.start_time, b.created_at;
     """
-    with connect() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+    with connect() as conn:
+    with conn.cursor() as cur:
         cur.execute(sql, (event_date,))
         return cur.fetchall()
 
