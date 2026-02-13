@@ -13,11 +13,7 @@ APP_TITLE = "Inscripción a actividades"
 ADMIN_TITLE = "Panel admin"
 PHONE_REGEX = r"^[0-9+() \-]{7,20}$"
 
-# Secrets expected:
-# st.secrets["db"]["url"]  -> Postgres connection string
-# st.secrets["admin"]["password"] -> admin password
 def get_db_url() -> str:
-    # Prefer Streamlit secrets, fallback to env var
     if "db" in st.secrets and "url" in st.secrets["db"]:
         return st.secrets["db"]["url"]
     return os.environ.get("DATABASE_URL", "")
@@ -37,9 +33,9 @@ def connect():
 # ---------- DB ops ----------
 def fetch_event_dates():
     with connect() as conn:
-    with conn.cursor() as cur:
-        cur.execute("select distinct event_date from public.sessions order by event_date;")
-        rows = cur.fetchall()
+        with conn.cursor() as cur:
+            cur.execute("select distinct event_date from public.sessions order by event_date;")
+            rows = cur.fetchall()
     return [r["event_date"] for r in rows]
 
 def fetch_sessions(event_date):
@@ -58,9 +54,10 @@ def fetch_sessions(event_date):
     order by s.activity, s.start_time;
     """
     with connect() as conn:
-    with conn.cursor() as cur:
-        cur.execute(sql, (event_date,))
-        rows = cur.fetchall()
+        with conn.cursor() as cur:
+            cur.execute(sql, (event_date,))
+            rows = cur.fetchall()
+
     for r in rows:
         r["remaining"] = int(r["capacity"]) - int(r["booked"])
     return rows
@@ -73,32 +70,39 @@ def create_booking_atomic(session_id, full_name, phone, email):
     - insert booking if remaining > 0
     """
     with connect() as conn:
-    with conn.cursor() as cur:
-            # Lock session row to avoid race conditions
-            cur.execute("select id, capacity from public.sessions where id=%s for update;", (session_id,))
-            srow = cur.fetchone()
-            if not srow:
-                return False, "Sesión no encontrada."
+        # transacción explícita (recomendado con psycopg v3)
+        with conn.transaction():
+            with conn.cursor() as cur:
+                # Lock session row to avoid race conditions
+                cur.execute(
+                    "select id, capacity from public.sessions where id=%s for update;",
+                    (session_id,),
+                )
+                srow = cur.fetchone()
+                if not srow:
+                    return False, "Sesión no encontrada."
 
-            cur.execute("select count(*)::int as booked from public.bookings where session_id=%s;", (session_id,))
-            booked = cur.fetchone()["booked"]
-            capacity = int(srow["capacity"])
-            remaining = capacity - booked
+                cur.execute(
+                    "select count(*)::int as booked from public.bookings where session_id=%s;",
+                    (session_id,),
+                )
+                booked = cur.fetchone()["booked"]
+                capacity = int(srow["capacity"])
+                remaining = capacity - booked
 
-            if remaining <= 0:
-                conn.rollback()
-                return False, "Lo sentimos: esa sesión se acaba de llenar."
+                if remaining <= 0:
+                    return False, "Lo sentimos: esa sesión se acaba de llenar."
 
-            cur.execute(
-                """
-                insert into public.bookings (session_id, full_name, phone, email)
-                values (%s, %s, %s, %s)
-                returning id;
-                """,
-                (session_id, full_name, phone, email),
-            )
-            _ = cur.fetchone()["id"]
-        conn.commit()
+                cur.execute(
+                    """
+                    insert into public.bookings (session_id, full_name, phone, email)
+                    values (%s, %s, %s, %s)
+                    returning id;
+                    """,
+                    (session_id, full_name, phone, email),
+                )
+                _ = cur.fetchone()["id"]
+
     return True, "¡Reserva confirmada!"
 
 def fetch_bookings(event_date):
@@ -118,9 +122,9 @@ def fetch_bookings(event_date):
     order by s.activity, s.start_time, b.created_at;
     """
     with connect() as conn:
-    with conn.cursor() as cur:
-        cur.execute(sql, (event_date,))
-        return cur.fetchall()
+        with conn.cursor() as cur:
+            cur.execute(sql, (event_date,))
+            return cur.fetchall()
 
 # ---------- UI ----------
 st.title(APP_TITLE)
@@ -162,7 +166,6 @@ with st.form("booking_form", clear_on_submit=True):
     submit = st.form_submit_button("Reservar plaza ✅", use_container_width=True)
 
 if submit:
-    # Basic validation
     if selected_session["remaining"] <= 0:
         st.error("Esa sesión ya está llena. Elige otra franja.")
         st.stop()
@@ -187,11 +190,13 @@ if submit:
         selected_session["id"],
         full_name.strip(),
         phone.strip(),
-        email.strip().lower(),
+        email.strip(),
     )
     if ok:
         st.success(msg)
-        st.info(f"✅ {activity} · {str(selected_session['start_time'])[:5]}-{str(selected_session['end_time'])[:5]} · {event_date.strftime('%Y-%m-%d')}")
+        st.info(
+            f"✅ {activity} · {str(selected_session['start_time'])[:5]}-{str(selected_session['end_time'])[:5]} · {event_date.strftime('%Y-%m-%d')}"
+        )
         st.rerun()
     else:
         st.error(msg)
@@ -211,7 +216,6 @@ with st.expander(ADMIN_TITLE):
         else:
             st.dataframe(df, use_container_width=True)
 
-            # CSV download
             csv_buf = io.StringIO()
             df.to_csv(csv_buf, index=False)
             st.download_button(
@@ -221,7 +225,5 @@ with st.expander(ADMIN_TITLE):
                 mime="text/csv",
                 use_container_width=True,
             )
-
-        st.caption("Tip: si quieres ocultar el panel admin, puedes quitar este expander.")
     elif admin_pw:
         st.error("Contraseña incorrecta.")
