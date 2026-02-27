@@ -100,7 +100,7 @@ st.title(APP_TITLE)
 
 dates = fetch_event_dates()
 if not dates:
-    st.warning("No hay sesiones cargadas en la base de datos todavía. Revisa el SQL de inserción.")
+    st.warning("No hay sesiones cargadas en la base de datos todavía.")
     st.stop()
 
 event_date = st.selectbox("Fecha del evento", options=dates)
